@@ -9,7 +9,7 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Input
+from tensorflow.keras.layers import Dense, Input, Dropout
 from tensorflow.keras.optimizers import Adam
 from sklearn.metrics import mean_squared_error, mean_absolute_error, accuracy_score, f1_score, roc_auc_score
 #from tensorflow.keras.utils import to_categorical
@@ -130,16 +130,18 @@ X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, 
 # Budowa modelu Keras
 model = Sequential([
     Input(shape=(X_train.shape[1],)),
-    Dense(64, activation='relu'),
-    Dense(32, activation='relu'),
+    Dense(128, activation='relu', kernel_regularizer='l2'),
+    Dense(64, activation='relu', kernel_regularizer='l2'),
+    Dropout(0.2),
+    Dense(32, activation='relu', kernel_regularizer='l2'),
     Dense(1, activation='linear')
 ])
 
 # Kompilacja modelu
-model.compile(optimizer=Adam(learning_rate=0.01), loss='mse', metrics=['mae'])
+model.compile(optimizer=Adam(learning_rate=0.001), loss='mse', metrics=['mae'])
 
 # Trenowanie modelu
-history = model.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.2, verbose=1)
+history = model.fit(X_train, y_train, epochs=650, batch_size=30, validation_split=0.2, verbose=1)
 
 # Ewaluacja modelu
 y_pred = model.predict(X_test).flatten()
@@ -181,13 +183,15 @@ y_test = np.array(y_test).astype('float32')
 # Budowa modelu klasyfikacji z Keras
 model_classification = Sequential([
     Input(shape=(X_train.shape[1],)),
-    Dense(64, activation='relu'),
-    Dense(32, activation='relu'),
+    Dense(128, activation='relu', kernel_regularizer='l2'),
+    Dense(64, activation='relu', kernel_regularizer='l2'),
+    Dropout(0.2),
+    Dense(32, activation='relu', kernel_regularizer='l2'),
     Dense(1, activation='sigmoid')
 ])
 
 # Kompilacja modelu
-model_classification.compile(optimizer=Adam(learning_rate=0.01), loss='binary_crossentropy', metrics=['accuracy'])
+model_classification.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
 
 X_train = X_train.astype('float32')
 X_test = X_test.astype('float32')
@@ -195,7 +199,7 @@ y_train = y_train.astype('float32')
 y_test = y_test.astype('float32')
 
 # Trenowanie modelu
-history_classification = model_classification.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.2, verbose=1)
+history_classification = model_classification.fit(X_train, y_train, epochs=650, batch_size=30, validation_split=0.2, verbose=1)
 
 # Ewaluacja modelu klasyfikacji
 y_pred_probs = model_classification.predict(X_test).flatten()
