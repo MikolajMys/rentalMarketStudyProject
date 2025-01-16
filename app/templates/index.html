@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Predictions</title>
+</head>
+<body>
+<h1>Predict with Trained Models</h1>
+<form id="regression-form">
+    <h2>Regression</h2>
+    <input type="text" name="features" placeholder="Enter features as comma-separated values">
+    <button type="button" onclick="predictRegression()">Predict</button>
+    <p id="regression-result"></p>
+</form>
+
+<form id="classification-form">
+    <h2>Classification</h2>
+    <input type="text" name="features" placeholder="Enter features as comma-separated values">
+    <button type="button" onclick="predictClassification()">Predict</button>
+    <p id="classification-result"></p>
+</form>
+
+<script>
+    async function predictRegression() {
+        const features = document.querySelector("#regression-form input").value.split(",").map(Number);
+        const response = await fetch("/predict/regression", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ features }),
+        });
+        const data = await response.json();
+        document.getElementById("regression-result").innerText = `Prediction: ${data.prediction}`;
+    }
+
+    async function predictClassification() {
+        const features = document.querySelector("#classification-form input").value.split(",").map(Number);
+        const response = await fetch("/predict/classification", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ features }),
+        });
+        const data = await response.json();
+        document.getElementById("classification-result").innerText = `Prediction: ${data.prediction}`;
+    }
+</script>
+</body>
+</html>
