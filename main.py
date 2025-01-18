@@ -95,7 +95,7 @@ def prepare_data(df):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    # Zapisanie scalera do pliku
+    # Zapisanie scalera
     with open("scaler.pkl", "wb") as f:
         pickle.dump(scaler, f)
 
@@ -141,13 +141,11 @@ for q in quantiles:
         Dense(1, activation='linear')
     ])
 
-    # Kompilacja modelu
     model.compile(optimizer=Adam(learning_rate=0.001), loss=lambda y_true, y_pred: quantile_loss(q, y_true, y_pred), metrics=['mae'])
 
     early_stopping = EarlyStopping(monitor='val_loss', patience=50, restore_best_weights=True, verbose=1)
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-6, verbose=1)
 
-    # Trenowanie
     history = model.fit(X_train, y_train, epochs=1000, batch_size=32, validation_split=0.2, verbose=1, callbacks=[early_stopping, reduce_lr])
 
     model.save(f"models/quantile_model_{int(q*100)}.h5")
