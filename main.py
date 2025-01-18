@@ -1,19 +1,27 @@
 import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-
+import pickle
 import pandas as pd
 import numpy as np
 import seaborn as sns
+import tensorflow as tf
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Input, Dropout
+from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from sklearn.metrics import mean_squared_error, mean_absolute_error, accuracy_score, f1_score, roc_auc_score
-#from tensorflow.keras.utils import to_categorical
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+import tensorflow.keras.backend as K
+
+# Funkcja straty kwantylowej
+def quantile_loss(q, y_true, y_pred):
+    y_true = tf.cast(y_true, dtype=tf.float32)
+    y_pred = tf.cast(y_pred, dtype=tf.float32)
+    error = y_true - y_pred
+    return K.mean(K.maximum(q * error, (q - 1) * error), axis=-1)
 
 # ETAP Wczytanie datasetu
 df = pd.read_csv("data/House_Rent_Dataset.csv")
@@ -31,16 +39,9 @@ plt.show()
 # Obsłużenie braku danych
 print("\nBraki danych w kolumnach:")
 print(df.isnull().sum())
-
+# Uzupełnienie średnią
 for col in df.select_dtypes(include=['float64', 'int64']).columns:
     df[col] = df[col].fillna(df[col].median())
-
-# Usunięcie pewnych kolumn
-threshold = 0.5
-missing_percentage = df.isnull().mean()
-columns_to_drop = missing_percentage[missing_percentage > threshold].index
-df.drop(columns=columns_to_drop, inplace=True)
-print("\nKolumny usunięte z powodu dużej liczby braków:", columns_to_drop.tolist())
 
 # Przetwarzanie kolumny 'Floor'
 def preprocess_floor(floor_value):
@@ -54,7 +55,7 @@ def preprocess_floor(floor_value):
 df['Floor'] = df['Floor'].apply(preprocess_floor)
 df['Floor'] = df['Floor'].fillna(df['Floor'].median())
 
-# Usuwanie odstających wartości
+# Usuwanie odstających wartości korzystając z analizy rozkładu IQR która pozwala na eliminację skrajnych wartości, które mogą zniekształcać model.
 sns.boxplot(x=df['Rent'])
 plt.title("Wykrywanie wartości odstających dla cen wynajmu")
 plt.show()
@@ -66,7 +67,7 @@ lower_bound = Q1 - 1.5 * IQR
 upper_bound = Q3 + 1.5 * IQR
 df = df[(df['Rent'] >= lower_bound) & (df['Rent'] <= upper_bound)]
 
-# Zakodowanie zmiennych kategorycznych
+# Zakodowanie zmiennych kategorycznych - uwzględnienie informacji o kategoriach w modelu numerycznym.
 df = pd.get_dummies(df, columns=['Area Locality', 'Area Type', 'City', 'Furnishing Status', 'Tenant Preferred'], drop_first=True)
 
 # Usunięcie kolumny 'Point of Contact'
@@ -78,23 +79,6 @@ if len(non_numeric_columns) > 0:
     print(f"\nUsuwane kolumny nienumeryczne przed standaryzacją: {non_numeric_columns.tolist()}")
     df.drop(columns=non_numeric_columns, inplace=True)
 
-# Analizowanie korelacji
-numeric_columns = df.select_dtypes(include=['float64', 'int64']).columns
-numeric_df = df[numeric_columns]
-
-correlation_matrix = numeric_df.corr()
-plt.figure(figsize=(12, 8))
-sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap="coolwarm")
-plt.title("Macierz korelacji")
-plt.show()
-
-correlation_with_rent = correlation_matrix['Rent'].sort_values(ascending=False)
-print("\nKorelacja zmiennych z 'Rent':")
-print(correlation_with_rent)
-
-low_correlation_columns = correlation_with_rent[correlation_with_rent.abs() < 0.1].index
-df.drop(columns=low_correlation_columns, inplace=True)
-print("\nUsunięte zmienne o niskiej korelacji:", low_correlation_columns.tolist())
 
 # Zapisanie kolumn przetworzonych
 processed_columns = df.drop('Rent', axis=1).columns.tolist()
@@ -103,24 +87,29 @@ with open("processed_columns.txt", "w") as f:
         f.write(col + "\n")
 
 # Przygotowanie danych
-X = df.drop('Rent', axis=1)
-y = df['Rent']
+def prepare_data(df):
+    X = df.drop('Rent', axis=1)
+    y = df['Rent']
 
-# Skalowanie danych
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+    # Skalowanie danych
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
-# Zapisanie scalera do pliku
-import pickle
-with open("scaler.pkl", "wb") as f:
-    pickle.dump(scaler, f)
+    # Zapisanie scalera do pliku
+    with open("scaler.pkl", "wb") as f:
+        pickle.dump(scaler, f)
 
-# Podzielenie na zbiory treningowe i testowe
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+    # Podzielenie na zbiory treningowe i testowe
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+    return X_train, X_test, y_train, y_test, scaler
+
+X_train, X_test, y_train, y_test, scaler = prepare_data(df)
 
 # Zredukowanie wymiarów za pomocą PCA
+# Redukcja liczb cech przy zachowaniu wiekszosci warjancji
 pca = PCA(n_components=0.95)
-X_pca = pca.fit_transform(X_scaled)
+X_pca = pca.fit_transform(X_train)
 
 print(f"\nLiczba komponentów zachowujących 95% wariancji: {pca.n_components_}")
 explained_variance = pca.explained_variance_ratio_
@@ -135,147 +124,56 @@ plt.ylabel('Skumulowana wariancja')
 plt.grid()
 plt.show()
 
-# ETAP Budowa modelu regresji**
-# Przygotowanie danych
-X = df.drop('Rent', axis=1)
-y = df['Rent']
+# Definicja kwantyli
+quantiles = [0.1, 0.5, 0.9]
 
-# Skalowanie danych
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+# Trenowanie modeli
+models = {}
+for q in quantiles:
+    print(f"Trenowanie modelu dla kwantyla: {q}")
+    model = Sequential([
+        Dense(128, input_dim=X_train.shape[1], activation='relu', kernel_regularizer='l2'),
+        Dropout(0.2),
+        Dense(64, activation='relu', kernel_regularizer='l2'),
+        Dropout(0.2),
+        Dense(32, activation='relu', kernel_regularizer='l2'),
+        Dropout(0.2),
+        Dense(1, activation='linear')
+    ])
 
-# Podzielenie danych na zbiory treningowe i testowe
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+    # Kompilacja modelu
+    model.compile(optimizer=Adam(learning_rate=0.001), loss=lambda y_true, y_pred: quantile_loss(q, y_true, y_pred), metrics=['mae'])
 
-# Budowanie modelu
-model = Sequential([
-    #Input(shape=(X_train.shape[1],)),
-    Dense(128, input_dim=X_train.shape[1], activation='relu', kernel_regularizer='l2'),
-    Dropout(0.2),
-    Dense(64, activation='relu', kernel_regularizer='l2'),
-    Dropout(0.2),
-    Dense(32, activation='relu', kernel_regularizer='l2'),
-    #Dropout(0.2),
-    Dense(1, activation='linear')
-])
+    early_stopping = EarlyStopping(monitor='val_loss', patience=50, restore_best_weights=True, verbose=1)
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-6, verbose=1)
 
-# Kompilowanie modelu
-model.compile(optimizer=Adam(learning_rate=0.001), loss='mse', metrics=['mae'])
+    # Trenowanie
+    history = model.fit(X_train, y_train, epochs=1000, batch_size=32, validation_split=0.2, verbose=1, callbacks=[early_stopping, reduce_lr])
 
-early_stopping_1 = EarlyStopping(monitor='val_loss', patience=50, restore_best_weights=True, verbose=1)
-reduce_lr_1 = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-6, verbose=1)
+    model.save(f"models/quantile_model_{int(q*100)}.h5")
+    models[q] = model
 
-# Trenowanie modelu
-history = model.fit(X_train, y_train, epochs=1000, batch_size=32, validation_split=0.2, verbose=1, callbacks=[early_stopping_1, reduce_lr_1])
+    # Wizualizacja strat
+    plt.figure(figsize=(10, 5))
+    plt.plot(history.history['loss'], label='Strata treningowa')
+    plt.plot(history.history['val_loss'], label='Strata walidacyjna')
+    plt.title(f'Krzywa uczenia modelu dla kwantyla {q}')
+    plt.xlabel('Epoka')
+    plt.ylabel('Strata')
+    plt.legend()
+    plt.grid()
+    plt.show()
 
+# Ewaluacja modeli
+for q, model in models.items():
+    y_pred = model.predict(X_test).flatten()
+    mae = mean_absolute_error(y_test, y_pred)
+    print(f"\nEwaluacja dla kwantyla {q}:")
+    print(f"MAE: {mae:.2f}")
 
-# Ewaluowanie modelu
-y_pred = model.predict(X_test).flatten()
-mse = mean_squared_error(y_test, y_pred)
-rmse = np.sqrt(mse)
-mae = mean_absolute_error(y_test, y_pred)
-
-print("\nEwaluacja modelu Keras:")
-print(f"MSE: {mse:.2f}")
-print(f"RMSE: {rmse:.2f}")
-print(f"MAE: {mae:.2f}")
-
-# Zapisanie model regresji
-model.save("models/regression_model.h5")
-
-# Wizualizacja wyników
-plt.figure(figsize=(10, 5))
-plt.plot(history.history['loss'], label='Strata treningowa')
-plt.plot(history.history['val_loss'], label='Strata walidacyjna')
-plt.title('Krzywa uczenia modelu Keras')
-plt.xlabel('Epoka')
-plt.ylabel('Strata (MSE)')
-plt.legend()
-plt.grid()
-plt.show()
-
-# ETAP Budowa modelu klasyfikacji
-# Określenie progu
-median_rent = y.median()
-df['Rent_Class'] = (y > median_rent).astype(int)  # 0: Tanie mieszkanie, 1: Drogie mieszkanie
-
-# Przygotowanie danych
-X = df.drop(['Rent', 'Rent_Class'], axis=1)
-y_class = df['Rent_Class']
-
-# Podzielenie na zbiory treningowe i testowe
-X_train, X_test, y_train, y_test = train_test_split(X, y_class, test_size=0.2, random_state=42)
-
-y_train = np.array(y_train).astype('float32')
-y_test = np.array(y_test).astype('float32')
-
-# Budowanie modelu klasyfikacji
-model_classification = Sequential([
-    #Input(shape=(X_train.shape[1],)),
-    Dense(128, input_dim=X_train.shape[1], activation='relu', kernel_regularizer='l2'),
-    Dense(64, activation='relu', kernel_regularizer='l2'),
-    Dropout(0.2),
-    Dense(32, activation='relu', kernel_regularizer='l2'),
-    Dense(1, activation='sigmoid')
-])
-
-# Kompilowanie modelu
-model_classification.compile(optimizer=Adam(learning_rate=0.00005), loss='binary_crossentropy', metrics=['accuracy'])
-
-X_train = X_train.astype('float32')
-X_test = X_test.astype('float32')
-y_train = y_train.astype('float32')
-y_test = y_test.astype('float32')
-
-early_stopping_2 = EarlyStopping(monitor='val_loss', patience=25, restore_best_weights=True, verbose=1)
-reduce_lr_2 = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6, verbose=1)
-
-# Trenowanie modelu
-history_classification = model_classification.fit(X_train, y_train, epochs=500, batch_size=32, validation_split=0.2, verbose=1, callbacks=[early_stopping_2, reduce_lr_2])
-
-# Ewaluowanie modelu
-y_pred_probs = model_classification.predict(X_test).flatten()
-y_pred_classes = (y_pred_probs > 0.5).astype(int)
-
-accuracy = accuracy_score(y_test, y_pred_classes)
-f1 = f1_score(y_test, y_pred_classes)
-roc_auc = roc_auc_score(y_test, y_pred_probs)
-
-print("\nEwaluacja modelu klasyfikacji Keras:")
-print(f"Accuracy: {accuracy:.2f}")
-print(f"F1-Score: {f1:.2f}")
-print(f"ROC-AUC: {roc_auc:.2f}")
-
-# Zapisanie model
-model_classification.save("models/classification_model.h5")
-
-# Wizualizacja wyników klasyfikacji
-plt.figure(figsize=(10, 5))
-plt.plot(history_classification.history['loss'], label='Strata treningowa')
-plt.plot(history_classification.history['val_loss'], label='Strata walidacyjna')
-plt.title('Krzywa uczenia modelu klasyfikacji Keras')
-plt.xlabel('Epoka')
-plt.ylabel('Strata (Binary Crossentropy)')
-plt.legend()
-plt.grid()
-plt.show()
-
-# Wykres dokładności
-plt.figure(figsize=(10, 5))
-plt.plot(history_classification.history['accuracy'], label='Dokładność treningowa')
-plt.plot(history_classification.history['val_accuracy'], label='Dokładność walidacyjna')
-plt.title('Dokładność modelu klasyfikacji Keras')
-plt.xlabel('Epoka')
-plt.ylabel('Dokładność')
-plt.legend()
-plt.grid()
-plt.show()
-
-# Wykres predykcji kontra rzeczywiste wartości
-plt.figure(figsize=(8, 6))
-plt.scatter(y_test, y_pred, alpha=0.5)
-plt.title('Predykcje vs Rzeczywiste wartości')
-plt.xlabel('Rzeczywiste wartości')
-plt.ylabel('Predykcje')
-plt.grid()
-plt.show()
+# Zapisanie predykcji do pliku
+predictions = {f"Quantile_{q}": model.predict(X_test).flatten() for q, model in models.items()}
+predictions['True Values'] = y_test.values
+predictions_df = pd.DataFrame(predictions)
+predictions_df.to_csv("quantile_predictions.csv", index=False)
+print("\nPredykcje zapisane do pliku quantile_predictions.csv")

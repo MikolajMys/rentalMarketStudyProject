@@ -20,13 +20,13 @@ with open("scaler.pkl", "rb") as f:
     scaler = pickle.load(f)
 
 sample_data = {
-    'BHK': 2,
-    'Size': 1200,
-    'Bathroom': 2,
-    'Floor': 3,
+    'BHK': 20,
+    'Size': 1100,
+    'Bathroom': 20,
+    'Floor': 20,
     'Area Type_Super Area': 1,
     'Area Locality_Bandel': 1,
-    'City_Mumbai': 1,#City_Chennai, City_Delhi, City_Hyderabad, City_Kolkata, City_Mumbai
+    'City_Kolkata': 1,#City_Chennai, City_Delhi, City_Hyderabad, City_Kolkata, City_Mumbai
     'Furnishing Status_Semi-Furnished': 1,
     'Tenant Preferred_Bachelors/Family': 1
 }
